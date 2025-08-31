@@ -640,4 +640,125 @@ public class CompletableFutureTest {
             assertThat(slow.join()).isEqualTo("slow");
         }
     }
+
+    @Nested
+    @DisplayName("예외 처리 메서드 테스트")
+    public class ExceptionHandlingMethodTest {
+        /** ====================================================================================================
+         * exceptionally() 테스트
+         * ===================================================================================================== */
+        @Test
+        void excetionally는_작업_수행중_예외_발생시_콜백으로_실행되며_대체값을_반환한다() {
+            // given
+            CompletableFuture<String> f1 = CompletableFuture.supplyAsync(() -> {
+                throw new RuntimeException("예외 발생");
+            });
+
+            // exceptionally()가 반환하는 새로운 Future를 받아야 함
+            CompletableFuture<String> exceptionFuture = f1.exceptionally(exception -> {
+                return exception.getMessage();
+            });
+
+            // when
+            String result = exceptionFuture.join();
+
+            // then
+            assertThat(result).isEqualTo("java.lang.RuntimeException: 예외 발생");
+        }
+
+        @Test
+        void exceptionally는_예외가_없으면_콜백을_실행하지_않고_기본_결과를_반환한다() {
+            //given
+            CompletableFuture<String> f1 = CompletableFuture.supplyAsync(() -> {
+                // 예외없이 정상적으로 응답 반환
+                return "test";
+            });
+
+            // exceptionally()는 새로운 CompletableFuture를 반환하는데,
+            // 여기서는 예외가 발생하지 않기 때문에 exceptionally() 콜백은 실행되지 않는다.
+            CompletableFuture<String> exceptionallyFuture = f1.exceptionally(ex -> {
+                return "exception result";
+            });
+
+            // when
+            String result = exceptionallyFuture.join();
+
+            // then
+            // 예외가 없으므로 원래 값 "test"가 그대로 반환된다
+            assertThat(result)
+                    .isEqualTo("test");
+        }
+
+        /** ====================================================================================================
+         * handle() 테스트
+         * ===================================================================================================== */
+        @Test
+        void handle은_정상_완료시_결과값을_받아_새로운_값으로_변환하여_반환한다() {
+            // given
+            CompletableFuture<String> f1 = CompletableFuture.supplyAsync(() -> {
+                return "test";
+            });
+
+            // handle()을 사용해 String을 Integer로 변환
+            CompletableFuture<Integer> handleFuture = f1.handle((result, exception) -> {
+                if (exception == null)
+                    return result.length();
+                else
+                    return -1; // 예외발생 시 -1 반환
+            });
+
+            // when
+            Integer result = handleFuture.join();
+
+            // then
+            assertThat(result)
+                    .isEqualTo(4); // "test"의 길이
+        }
+
+        @Test
+        void handle은_예외_발생시_예외를_받아_새로운_값으로_변환하여_반환한다() {
+            // given
+            CompletableFuture<String> f1 = CompletableFuture.supplyAsync(() -> {
+                throw new RuntimeException("예외 발생");
+            });
+
+            // handle()을 사용해 예외를 처리하고 String을 Integer로 변환함
+            CompletableFuture<Integer> handleFuture = f1.handle((result, exception) -> {
+                if(exception == null)
+                    return result.length();
+                else
+                    return -1; // 예외가 발생하기 때문에 -1이 반환됨
+            });
+
+            // when
+            Integer result = handleFuture.join();
+
+            // then
+            assertThat(result)
+                    .isEqualTo(-1); // 예외 처리로 -1 반환
+        }
+
+        @Test
+        void handle은_결과값의_반환타입을_원본_Future와_다르게_변경할_수_있다() {
+            // given
+            CompletableFuture<String> f1 = CompletableFuture.supplyAsync(() -> {
+                return "test";
+            });
+
+            // handle()을 사용해 String -> Boolean으로 변환
+            CompletableFuture<Boolean> handleFuture = f1.handle((result, exception) -> {
+                if (exception == null)
+                    return result.startsWith("h");
+                else
+                    return false;
+            });
+
+            // when
+            Boolean result = handleFuture.join();
+
+            // then
+            assertThat(result)
+                    .isFalse();
+        }
+    }
 }
