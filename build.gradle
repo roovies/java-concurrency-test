@@ -1,0 +1,32 @@
+plugins {
+    id 'java'
+}
+
+group = 'org.example'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+
+compileJava {
+    options.encoding = 'UTF-8'
+}
+compileTestJava {
+    options.encoding = 'UTF-8'
+}
+
+dependencies {
+    // Junit 5
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    // AssertJ
+    testImplementation 'org.assertj:assertj-core:3.25.3'
+    // Awaitility
+    testImplementation 'org.awaitility:awaitility:4.2.1'
+}
+
+test {
+    useJUnitPlatform()
+}
