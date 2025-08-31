@@ -761,4 +761,213 @@ public class CompletableFutureTest {
                     .isFalse();
         }
     }
+
+    @Nested
+    @DisplayName("작업 완료시키는 메서드 테스트")
+    public class CompletionMethodTest {
+        /** ====================================================================================================
+         * complete(), completeExceptionally() 테스트
+         * ===================================================================================================== */
+        @Test
+        void complete는_비동기작업을_수동으로_정상_완료시킨다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>(); // 미완료 작업
+
+            // 해당 비동기 작업이 미완료 상태인지 확인
+            assertThat(future.isDone()).isFalse();
+
+            // when
+            boolean completed = future.complete("result");
+
+            // then
+            assertThat(completed).isTrue(); // 완료시키는 작업이 성공했는지
+            assertThat(future.isDone()).isTrue(); // 비동기 작업 상태가 완료된 상태인지
+            assertThat(future.join()).isEqualTo("result"); // 설정한 값을 반환하는지
+        }
+
+        @Test
+        void completeExceptionally는_비동기작업을_수동으로_예외로_완료시킨다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            RuntimeException ex = new RuntimeException("예외 발생");
+
+            // when
+            boolean completed = future.completeExceptionally(ex);
+
+            // then
+            assertThat(completed).isTrue(); // 완료시키는 작업이 성공했는지
+            assertThat(future.isDone()).isTrue(); // 비동기 작업 상태가 완료된 상태인지
+            assertThat(future.isCompletedExceptionally()).isTrue(); // 예외 완료 상태
+
+            // 예외가 발생하는지 확인
+            assertThatThrownBy(() -> future.join())
+                    .isInstanceOf(CompletionException.class)
+                    .hasCauseInstanceOf(RuntimeException.class)
+                    .hasRootCauseMessage("예외 발생");
+        }
+
+        @Test
+        void 이미_완료된_비동기작업에_complete를_호출하면_false를_반환한다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            future.complete("first result"); // 먼저 완료
+
+            // when
+            boolean secondComplete = future.complete("second result");
+
+            // then
+            assertThat(secondComplete).isFalse(); // 완료시키는 작업은 실패해야 함 -> 이미 완료되어 있어서 false
+            assertThat(future.join()).isEqualTo("first result"); // 첫 번째 값 유지
+        }
+
+        /** ====================================================================================================
+         * obtrudeValue(), obtrudeException() 테스트
+         * ===================================================================================================== */
+        @Test
+        void obtrudeValue는_미완료_비동기작업을_강제로_정상_완료시킨다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>(); // 미완료 작업
+
+            // 해당 비동기 작업이 미완료 상태인지 확인
+            assertThat(future.isDone()).isFalse();
+
+            // when
+            future.obtrudeValue("forced result");
+
+            // then
+            assertThat(future.isDone()).isTrue(); // 비동기 작업 상태가 완료된 상태인지
+            assertThat(future.join()).isEqualTo("forced result"); // 설정한 값을 반환하는지
+        }
+
+        @Test
+        void obtrudeException는_미완료_비동기작업을_강제로_예외_완료시킨다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            RuntimeException ex = new RuntimeException("강제 예외");
+
+            // when
+            future.obtrudeException(ex);
+
+            // then
+            assertThat(future.isDone()).isTrue(); // 비동기 작업 상태가 완료된 상태인지
+            assertThat(future.isCompletedExceptionally()).isTrue(); // 예외 완료 상태
+
+            // 예외가 발생하는지 확인
+            assertThatThrownBy(() -> future.join())
+                    .isInstanceOf(CompletionException.class)
+                    .hasCauseInstanceOf(RuntimeException.class)
+                    .hasRootCauseMessage("강제 예외");
+        }
+
+        @Test
+        void 이미_완료된_비동기작업에_obtrudeValue를_호출하면_결과값이_덮어쓰여진다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            future.complete("original result"); // 먼저 완료
+
+            // when
+            future.obtrudeValue("overridden result");
+
+            // then
+            assertThat(future.isDone()).isTrue(); // 여전히 완료 상태
+            assertThat(future.join()).isEqualTo("overridden result"); // 덮어쓴 값으로 변경됨
+        }
+
+        @Test
+        void 예외로_완료된_비동기작업에_obtrudeValue를_호출하면_정상값으로_덮어쓰여진다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            future.completeExceptionally(new RuntimeException("원본 예외")); // 예외로 완료
+
+            // when
+            future.obtrudeValue("recovered result");
+
+            // then
+            assertThat(future.isDone()).isTrue(); // 여전히 완료 상태
+            assertThat(future.isCompletedExceptionally()).isFalse(); // 더 이상 예외 완료 상태가 아님
+            assertThat(future.join()).isEqualTo("recovered result"); // 정상값으로 복구됨
+        }
+
+        /** ====================================================================================================
+         * cancel() 테스트
+         * ===================================================================================================== */
+        @Test
+        void cancel은_아직_미완료된_비동기작업을_취소_상태로_완료시킨다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>(); // 미완료 작업
+
+            // 해당 비동기 작업이 미완료 상태인지 확인
+            assertThat(future.isDone()).isFalse();
+            assertThat(future.isCancelled()).isFalse();
+
+            // when
+            boolean cancelled = future.cancel(true);
+
+            // then
+            assertThat(cancelled).isTrue(); // 취소 성공인지
+            assertThat(future.isDone()).isTrue(); // 비동기 작업 상태가 완료된 상태인지
+            assertThat(future.isCancelled()).isTrue(); // 취소 상태인지
+            assertThat(future.isCompletedExceptionally()).isTrue(); // 예외 완료 상태인지
+
+            // CancellationException이 발생하는지 확인
+            assertThatThrownBy(() -> future.join())
+                    .isInstanceOf(CancellationException.class);
+        }
+
+        @Test
+        void 이미_완료된_비동기작업에_cancel을_호출하면_false를_반환한다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            future.complete("completed result"); // 먼저 완료
+
+            // when
+            boolean cancelled = future.cancel(true);
+
+            // then
+            assertThat(cancelled).isFalse(); // 취소 실패해야 함 -> 이미 완료되어 있어서 false
+            assertThat(future.isCancelled()).isFalse(); // 취소 상태가 아님
+            assertThat(future.join()).isEqualTo("completed result"); // 기존 값 유지
+        }
+
+        @Test
+        void 이미_취소된_비동기작업에_cancel을_호출하면_true를_반환한다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            future.cancel(true);
+
+            // when
+            boolean cancelled = future.cancel(true);
+
+            // then
+            assertThat(cancelled).isTrue(); // 이미 취소된 상태라서 true를 반환함
+            assertThat(future.isCancelled()).isTrue(); // 취소 상태를 유지함
+
+            // 여전히 CancellationException이 발생하는지 확인
+            assertThatThrownBy(() -> future.join())
+                    .isInstanceOf(CancellationException.class);
+        }
+
+        @Test
+        void cancel의_mayInterruptIfRunning_매개변수는_동작에_영향을_주지_않는다() {
+            // given
+            CompletableFuture<String> future1 = new CompletableFuture<>();
+            CompletableFuture<String> future2 = new CompletableFuture<>();
+
+            // when
+            boolean cancelled1 = future1.cancel(true);   // mayInterruptIfRunning = true
+            boolean cancelled2 = future2.cancel(false);  // mayInterruptIfRunning = false
+
+            // then
+            assertThat(cancelled1).isTrue();
+            assertThat(cancelled2).isTrue();
+            assertThat(future1.isCancelled()).isTrue();
+            assertThat(future2.isCancelled()).isTrue();
+
+            // 둘 다 동일하게 CancellationException 발생
+            assertThatThrownBy(() -> future1.join())
+                    .isInstanceOf(CancellationException.class);
+            assertThatThrownBy(() -> future2.join())
+                    .isInstanceOf(CancellationException.class);
+        }
+    }
 }
