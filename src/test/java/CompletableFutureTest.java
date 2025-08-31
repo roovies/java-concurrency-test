@@ -136,4 +136,212 @@ public class CompletableFutureTest {
                     .isEqualTo("작업 결과");
         }
     }
+
+    @Nested
+    @DisplayName("콜백 메서드 테스트")
+    public class callBackMethodTest {
+        /** ====================================================================================================
+         * 동기적 콜백 메서드 테스트 - thenApply, thenAccept, thenRun
+         * - 셋 다 적용되는 개념이므로 thenApply만 예시로 작성함
+         * ===================================================================================================== */
+        @Test
+        void 현재_호출_쓰레드에서_작업이_완료될_경우_콜백_메서드_thenApply도_호출_쓰레드에서_실행된다() {
+            // given
+            CompletableFuture<String> future = CompletableFuture.completedFuture("Already Completed Value");
+            AtomicReference<String> callbackThreadName = new AtomicReference<>();
+            String callerThreadName = Thread.currentThread().getName();
+            System.out.println("호출 쓰레드: " + callerThreadName);
+
+            // when
+            CompletableFuture<String> transformed = future.thenApply(s -> {
+                callbackThreadName.set(Thread.currentThread().getName());
+                System.out.println("콜백이 수행된 쓰레드: " + Thread.currentThread().getName());
+                return s.toUpperCase();
+            });
+
+            // then
+            String result = transformed.join();
+            assertThat(result).isEqualTo("Already Completed Value".toUpperCase());
+            assertThat(callbackThreadName.get())
+                    .isEqualTo(callerThreadName); // 이미 완료된 상태라 현재 스레드에서 실행
+        }
+
+        @Test
+        void 이전_작업이_미완료된_상태에서_등록된_thenApply는_작업을_완료시키는_쓰레드와_동일한_쓰레드에서_수행된다() throws InterruptedException {
+            // given
+            // 작업이 완료되지 않는 CompletableFuture 생성
+            CompletableFuture<String> future = new CompletableFuture<>();
+            AtomicReference<String> callbackThreadName = new AtomicReference<>();
+            AtomicReference<String> executorThreadName = new AtomicReference<>();
+
+            // when
+            // 1. 이전 작업이 미완료 상태이지만, thenApply() 등록
+            CompletableFuture<String> transformedFuture = future.thenApply(str -> {
+                callbackThreadName.set(Thread.currentThread().getName());
+                System.out.println("콜백이 수행된 쓰레드명: " + Thread.currentThread().getName());
+                return str.toUpperCase();
+            });
+
+            // 2. 새로운 쓰레드에서 CompletableFuture 완료시키기
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            executor.submit(() ->  {
+                future.complete("완료처리할 값"); // 작업 완료 시키기
+                System.out.println("작업을 완료시킨 쓰레드명: " + Thread.currentThread().getName());
+                executorThreadName.set(Thread.currentThread().getName());
+            });
+            executor.shutdown();
+            executor.awaitTermination(1, TimeUnit.SECONDS); // future.complete()가 실행될 때까지 기다려야 콜백이 실행되고 callbackThread.get()을 읽을 수 있음
+
+            // then
+            // 콜백이 완료시킨 쓰레드(newSingleThreadExecutor)에서 실행됐는지 확인
+            assertThat(callbackThreadName.get())
+                    .isEqualTo(executorThreadName.get());
+        }
+
+        /** ====================================================================================================
+         * 비동기적 콜백 메서드 테스트 - thenApplyAsync, thenAcceptAsync, thenRunAsync
+         * - 셋 다 적용되는 개념이므로 thenApplyAsync만 예시로 작성함
+         * ===================================================================================================== */
+        @Test
+        void thenApplySync는_항상_기본풀에서_실행된다() throws InterruptedException {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            AtomicReference<String> callbackThreadName = new AtomicReference<>();
+            AtomicReference<String> executorThreadName = new AtomicReference<>();
+
+            // when
+            CompletableFuture<String> transformedFuture = future.thenApplyAsync(str -> {
+                // 콜백이 실행되는 쓰레드명을 저장
+                callbackThreadName.set(Thread.currentThread().getName());
+                System.out.println("콜백이 수행된 쓰레드명: " + Thread.currentThread().getName());
+                return str.toUpperCase();
+            });
+
+            // 별도의 스레드에서 future.complete() 호출 → 콜백 실행 트리거
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            executor.submit(() -> {
+                future.complete("완료처리할 값");
+                System.out.println("작업을 완료시킨 쓰레드명: " + Thread.currentThread().getName());
+                executorThreadName.set(Thread.currentThread().getName());
+            });
+            executor.shutdown();
+            executor.awaitTermination(1, TimeUnit.SECONDS);
+
+            // then
+            // Awaitility로 콜백이 실행될 때까지 기다린 후 검증 수행
+            /**
+             * Awaitility.await().atMost(1, TimeUnit.SECONDS).untilAsserted(...)
+             * => 지정된 시간(1초) 동안 계속 polling 하면서 콜백이 실행되어 callbackThreadName이 값으로 채워질 때까지 기다림
+             * => join()을 직접 호출해서 기다리는 대신 Awaitility가 비동기 완료를 보장.
+             */
+            await().atMost(1, TimeUnit.SECONDS).untilAsserted(() -> {
+                // 1. 콜백이 future를 complete한 스레드에서 실행되지 않았는지 확인
+                assertThat(callbackThreadName.get())
+                        .isNotEqualTo(executorThreadName.get());
+
+                // 2. 콜백이 ForkJoinPool의 워커 스레드에서 실행되었는지 확인
+                assertThat(callbackThreadName.get())
+                        .contains("ForkJoinPool");
+
+                // 3. 반환값이 정상 변환되었는지 확인
+                assertThat(transformedFuture.join())
+                        .isEqualTo("완료처리할 값".toUpperCase());
+            });
+        }
+
+        @Test
+        void thenApplySync에_Executor_전달시_콜백_메서드가_전달한_Executor_쓰레드풀에서_수행된다() throws InterruptedException {
+            // given
+            // 작업이 완료되지 않는 CompletableFuture 생성
+            CompletableFuture<String> future = new CompletableFuture<>();
+            AtomicReference<String> callbackThreadName = new AtomicReference<>();
+            AtomicReference<String> executorThreadName = new AtomicReference<>();
+            String currentThreadName = Thread.currentThread().getName();
+            System.out.println("외부 호출 쓰레드명(현재 작업 영역): " + Thread.currentThread().getName());
+
+            // when
+            // 1. 이전 작업이 미완료 상태이지만, thenApply() 등록 (Executor를 전달하여 해당 콜백이 Executor에서 실행되도록 함)
+            CompletableFuture<String> transformedFuture = future.thenApplyAsync(str -> {
+                callbackThreadName.set(Thread.currentThread().getName());
+                System.out.println("콜백이 수행된 쓰레드명: " + Thread.currentThread().getName());
+                return str.toUpperCase();
+            }, Executors.newSingleThreadExecutor());
+
+            // 2. 새로운 쓰레드에서 CompletableFuture 완료시키기
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            executor.submit(() ->  {
+                future.complete("완료처리할 값");
+                System.out.println("작업을 완료시킨 쓰레드명: " + Thread.currentThread().getName());
+                executorThreadName.set(Thread.currentThread().getName());
+            });
+            executor.shutdown();
+            executor.awaitTermination(1, TimeUnit.SECONDS); // future.complete()가 실행될 때까지 기다려야 콜백이 실행되고 callbackThread.get()을 읽을 수 있음
+
+            // then
+            // 콜백이 완료시킨 쓰레드(newSingleThreadExecutor)에서 실행됐는지 확인
+            assertThat(callbackThreadName.get())
+                    .isNotEqualTo(executorThreadName.get());
+
+            // 콜백이 기본풀(ForkJoinPool)에서 실행됐는지 확인
+            assertThat(callbackThreadName.get())
+                    .isNotEqualTo(executorThreadName.get())
+                    .isNotEqualTo(currentThreadName);
+        }
+
+        /** ====================================================================================================
+         * thenApply() 테스트
+         * ===================================================================================================== */
+        @Test
+        void thenApply는_반환값을_변환해준다() {
+            // given
+            CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> "hello");
+
+            // when
+            CompletableFuture<String> transformedFuture = future.thenApply(str -> str.toUpperCase());
+
+            // then
+            String result = transformedFuture.join();
+            assertThat(result).isEqualTo("HELLO");
+        }
+
+        /** ====================================================================================================
+         * thenAccept() 테스트
+         * ===================================================================================================== */
+        @Test
+        void thenAccept는_반환값을_사용만한다() {
+            // given
+            CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> "hello");
+            AtomicReference<Integer> consumedValue = new AtomicReference<>(); // 소비 결과 담기
+
+            // when
+            CompletableFuture<Void> consumer = future.thenAccept(str -> {
+                consumedValue.set(str.hashCode());
+            });
+
+            // then
+            consumer.join(); // 비동기 작업 완료 후 검증
+            assertThat(consumedValue.get())
+                    .isEqualTo("hello".hashCode());
+        }
+
+        /** ====================================================================================================
+         * thenRun() 테스트
+         * ===================================================================================================== */
+        @Test
+        void thenRun은_반환값을_처리하지_않고_전달받은_작업을_수행한다() {
+            // given
+            CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> "hello");
+            AtomicInteger num = new AtomicInteger(1);
+
+            // when
+            CompletableFuture<Void> runnable = future.thenRun(() -> {
+                System.out.println("현재 실행 쓰레드: " + Thread.currentThread().getName());
+                num.incrementAndGet();
+            });
+
+            // then
+            assertThat(num.get())
+                    .isEqualTo(2);
+        }
+    }
 }
