@@ -970,4 +970,137 @@ public class CompletableFutureTest {
                     .isInstanceOf(CancellationException.class);
         }
     }
+
+    @Nested
+    @DisplayName("작업 결과를 가져오는 메서드 테스트")
+    public class ResultMethodTest {
+        /** ====================================================================================================
+         * join() 테스트
+         * ===================================================================================================== */
+        @Test
+        void join은_정상_완료된_비동기작업의_결과값을_반환한다() {
+            // given
+            CompletableFuture<String> future = CompletableFuture.completedFuture("success");
+
+            // when & then
+            String result = future.join(); // checked exception 없이 호출 가능
+            assertThat(result).isEqualTo("success");
+        }
+
+        @Test
+        void join은_예외로_완료된_비동기작업에_대해_CompletionException을_던진다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            RuntimeException originalException = new RuntimeException("원본 예외");
+            future.completeExceptionally(originalException);
+
+            // when & then
+            assertThatThrownBy(() -> future.join())
+                    .isInstanceOf(CompletionException.class)
+                    .hasCauseInstanceOf(RuntimeException.class)
+                    .hasRootCauseMessage("원본 예외");
+        }
+
+        @Test
+        void join은_취소된_비동기작업에_대해_CancellationException을_던진다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            future.cancel(true);
+
+            // when & then
+            assertThatThrownBy(() -> future.join())
+                    .isInstanceOf(CancellationException.class);
+        }
+
+        @Test
+        void join은_미완료_비동기작업이_완료될_때까지_대기한다() throws InterruptedException {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            AtomicReference<String> result = new AtomicReference<>();
+            AtomicBoolean finished = new AtomicBoolean(false);
+
+            // 별도 쓰레드에서 join() 호출
+            Thread joinThread = new Thread(() -> {
+                result.set(future.join()); // 완료까지 대기
+                finished.set(true);
+            });
+            joinThread.start();
+
+            // when
+            Thread.sleep(100); // 잠시 대기해서 join()이 블로킹되는지 확인
+            assertThat(finished.get()).isFalse(); // 아직 완료되지 않았어야 함
+
+            future.complete("delayed result"); // 이제 완료
+            joinThread.join(1000); // 쓰레드 완료 대기
+
+            // then
+            assertThat(finished.get()).isTrue(); // 이제 완료되어야 함
+            assertThat(result.get()).isEqualTo("delayed result");
+        }
+
+        /** ====================================================================================================
+         * getNow() 테스트
+         * ===================================================================================================== */
+        @Test
+        void getNow는_정상_완료된_비동기작업의_결과값을_즉시_반환한다() {
+            // given
+            CompletableFuture<String> future = CompletableFuture.completedFuture("success");
+
+            // when & then
+            String result = future.getNow("default"); // 블로킹하지 않음
+            assertThat(result).isEqualTo("success");
+        }
+
+        @Test
+        void getNow는_미완료_비동기작업에_대해_기본값을_즉시_반환한다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>(); // 미완료 작업
+
+            // when & then
+            String result = future.getNow("default value"); // 블로킹하지 않음
+            assertThat(result).isEqualTo("default value");
+            assertThat(future.isDone()).isFalse(); // 여전히 미완료 상태
+        }
+
+        @Test
+        void getNow는_예외로_완료된_비동기작업에_대해_CompletionException을_던진다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            RuntimeException originalException = new RuntimeException("원본 예외");
+            future.completeExceptionally(originalException);
+
+            // when & then
+            assertThatThrownBy(() -> future.getNow("default"))
+                    .isInstanceOf(CompletionException.class)
+                    .hasCauseInstanceOf(RuntimeException.class)
+                    .hasRootCauseMessage("원본 예외");
+        }
+
+        @Test
+        void getNow는_취소된_비동기작업에_대해_CancellationException을_던진다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>();
+            future.cancel(true);
+
+            // when & then
+            assertThatThrownBy(() -> future.getNow("default"))
+                    .isInstanceOf(CancellationException.class);
+        }
+
+        @Test
+        void getNow는_블로킹하지_않고_즉시_반환된다() {
+            // given
+            CompletableFuture<String> future = new CompletableFuture<>(); // 미완료 작업
+            long startTime = System.currentTimeMillis();
+
+            // when
+            String result = future.getNow("immediate");
+            long endTime = System.currentTimeMillis();
+
+            // then
+            assertThat(result).isEqualTo("immediate");
+            assertThat(endTime - startTime).isLessThan(10); // 거의 즉시 반환 (10ms 미만)
+            assertThat(future.isDone()).isFalse(); // 여전히 미완료 상태
+        }
+    }
 }
