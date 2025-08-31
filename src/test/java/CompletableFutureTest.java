@@ -344,4 +344,68 @@ public class CompletableFutureTest {
                     .isEqualTo(2);
         }
     }
+
+    @Nested
+    @DisplayName("작업 결과 조합 메서드 테스트")
+    public class CombineMethodTest {
+        /** ====================================================================================================
+         * thenApply() 테스트 (문제 발생 케이스)
+         * ===================================================================================================== */
+        @Test
+        void thenApply는_중첩된_CompletableFuture를_반환한다() {
+            // given
+            CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> "test");
+
+            // when
+            CompletableFuture<CompletableFuture<String>> result = future.thenApply(str -> CompletableFuture.supplyAsync(() -> str.toUpperCase()));
+
+            // then
+            // 결과가 중첩된 구조 => CompletableFuture<CompletableFuture<T>>
+            // 따라서 join을 두 번해야 값을 얻을 수 있는지 검증
+
+            // 첫 번째 join() → CompletableFuture<String>
+            CompletableFuture<String> innerFuture = result.join();
+            assertThat(innerFuture).isInstanceOf(CompletableFuture.class);
+
+            // 두 번째 join() → String
+            String finalResult = innerFuture.join();
+            assertThat(finalResult).isEqualTo("TEST");
+        }
+
+        /** ====================================================================================================
+         * thenCompose() 테스트 (위 문제 해결 테스트)
+         * ===================================================================================================== */
+        @Test
+        void thenCompose는_중첩되지_않은_평탄화된_CompletableFuture를_반환한다() {
+            // given
+            CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> "test");
+
+            // when
+            CompletableFuture<String> result = future.thenCompose(str -> CompletableFuture.supplyAsync(() -> str.toUpperCase()));
+
+            // then
+            // 결과가 중첩된 구조 => CompletableFuture<CompletableFuture<T>>
+            // 따라서 join을 두 번해야 값을 얻을 수 있는지 검증
+
+            // 첫 번째 join() → String
+            String finalResult = result.join();
+            assertThat(finalResult).isEqualTo("TEST");
+        }
+        /** ====================================================================================================
+         * thenCombine() 테스트
+         * ===================================================================================================== */
+        @Test
+        void thenCombine은_두개의_비동기결과를_조합한다() {
+            // given
+            CompletableFuture<String> future1 = CompletableFuture.supplyAsync(() -> "hello");
+            CompletableFuture<String> future2 = CompletableFuture.supplyAsync(() -> "world");
+
+            // when
+            CompletableFuture<String> combined = future1.thenCombine(future2, (s1, s2) -> s1 + " " + s2);
+
+            // then
+            assertThat(combined.join())
+                    .isEqualTo("hello world");
+        }
+    }
 }
