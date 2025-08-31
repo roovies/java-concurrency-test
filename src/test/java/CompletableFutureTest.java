@@ -408,4 +408,236 @@ public class CompletableFutureTest {
                     .isEqualTo("hello world");
         }
     }
+
+    @Nested
+    @DisplayName("여러 작업을 묶어서 집합으로 관리하는 메서드 테스트")
+    public class AggregateMethodTest {
+        /** ====================================================================================================
+         * allOf() 테스트
+         * ===================================================================================================== */
+        @Test
+        void allOf는_전달된_여러_작업들_중_하나라도_완료되지_않을_경우_전체_작업의_상태는_미완료_상태여야_한다() {
+            // given
+            CompletableFuture<String> f1 = CompletableFuture.completedFuture("done1"); // 이미 완료
+            CompletableFuture<String> f2 = CompletableFuture.completedFuture("done2"); // 이미 완료
+            CompletableFuture<String> f3 = new CompletableFuture<>(); // 미완료
+
+            // when
+            CompletableFuture<Void> all = CompletableFuture.allOf(f1, f2, f3);
+
+            // then
+            assertThat(f1.isDone()).isTrue();
+            assertThat(f2.isDone()).isTrue();
+            assertThat(f3.isDone()).isFalse();
+            assertThat(all.isDone()).isFalse();
+        }
+
+        @Test
+        void allOf는_여러_작업_중_하나라도_예외_발생시_전체_작업은_완료되지만_결과는_CompletionException으로_감싸져서_던져진다() {
+            // given
+            CompletableFuture<String> f1 = CompletableFuture.completedFuture("done1");
+            CompletableFuture<String> f2 = CompletableFuture.supplyAsync(() -> {
+                throw new RuntimeException("예외 발생");
+            });
+            CompletableFuture<String> f3 = CompletableFuture.supplyAsync(() -> "hello");
+
+
+            // when
+            CompletableFuture<Void> all = CompletableFuture.allOf(f1, f2, f3);
+
+            // then
+            assertThat(all).isDone(); // allOf 자체는 완료됨
+            assertThatThrownBy(() -> all.join())
+                    .isInstanceOf(CompletionException.class)
+                    .hasCauseInstanceOf(RuntimeException.class);
+        }
+
+        @Test
+        void allOf의_join은_모든_작업이_끝날때까지_기다린다() {
+            // given
+            CompletableFuture<String> f1 = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return "done1";
+            });
+
+            CompletableFuture<String> f2 = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return "done2";
+            });
+
+            // when
+            CompletableFuture<Void> all = CompletableFuture.allOf(f1, f2);
+            long start = System.currentTimeMillis();
+            all.join(); // 블로킹 발생 200ms + 300ms
+            long end = System.currentTimeMillis();
+
+            // then
+            // f1은 200ms, f2는 300ms 후에 작업이 완료된다.
+            // 따라서 블로킹 시간이 300ms이므로, 로직 수행 시간은 최소 300ms 이상이어야 한다.
+            assertThat(end - start).isGreaterThanOrEqualTo(300);
+            assertThat(all.isDone()).isTrue();
+        }
+
+        /** ====================================================================================================
+         * anyOf() 테스트
+         * ===================================================================================================== */
+        @Test
+        void anyOf는_여러_작업중_가장_먼저_끝난_작업의_결과만_반환한다() {
+            // given
+            CompletableFuture<String> f1 = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return "f1";
+            });
+
+            CompletableFuture<String> f2 = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return "f2";
+            });
+
+            CompletableFuture<String> f3 = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return "f3";
+            });
+
+            // when
+            CompletableFuture<Object> any = CompletableFuture.anyOf(f1, f2, f3);
+
+            // then
+            assertThat(any.join()).isEqualTo("f2");
+        }
+
+        @Test
+        void anyOf는_가장_먼저_끝난_작업이_예외면_CompletionException으로_감싸서_반환한다() {
+            // given
+            CompletableFuture<String> f1 = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return "f1";
+            });
+
+            CompletableFuture<String> f2 = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                throw new RuntimeException("예외 발생");
+            });
+
+            CompletableFuture<String> f3 = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return "f3";
+            });
+
+            // when
+            CompletableFuture<Object> any = CompletableFuture.anyOf(f1, f2, f3);
+
+            // then
+            assertThatThrownBy(() -> any.join())
+                    .isInstanceOf(CompletionException.class)
+                    .hasCauseInstanceOf(RuntimeException.class);
+        }
+
+        @Test
+        void anyOf의_join은_가장_빨리_끝난_작업까지만_기다리고_나머지_작업들은_기다리지_않는다() {
+            // given
+            CompletableFuture<String> f1 = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return "f1";
+            });
+
+            CompletableFuture<String> f2 = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return "f2";
+            });
+
+            // when
+            CompletableFuture<Object> any = CompletableFuture.anyOf(f1, f2);
+            long start = System.currentTimeMillis();
+            Object result = any.join(); // f2가 더 빨리 끝남
+            long end = System.currentTimeMillis();
+
+            // then
+            assertThat(result).isEqualTo("f2");
+            assertThat(end - start).isLessThan(500); // f1이 끝날 때까지 기다리지 않음
+        }
+
+        @Test
+        void anyOf는_특정_작업이_완료되더라도_나머지_작업들은_계속_실행된다() {
+            // given
+            CompletableFuture<String> slow = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(500); // 느린 작업
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return "slow";
+            });
+
+            CompletableFuture<String> fast = CompletableFuture.supplyAsync(() -> {
+                try {
+                    Thread.sleep(100); // 빠른 작업
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return "fast";
+            });
+
+            CompletableFuture<Object> any = CompletableFuture.anyOf(slow, fast);
+
+            // when
+            Object result = any.join(); // fast가 먼저 끝나므로 즉시 완료됨
+
+            // then
+            assertThat(result).isEqualTo("fast");
+            assertThat(any.isDone()).isTrue();
+
+            // 하지만 slow는 여전히 실행 중이어야 한다.
+            assertThat(slow.isDone()).isFalse();
+
+            // 잠시 대기한 뒤 slow도 정상적으로 끝나는지 확인
+            try {
+                Thread.sleep(600);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            assertThat(slow.isDone()).isTrue();
+            assertThat(slow.join()).isEqualTo("slow");
+        }
+    }
 }
